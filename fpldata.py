@@ -1,4 +1,5 @@
 import requests
+import requests_cache
 import pandas as pd
 
 # Base URLs
@@ -32,6 +33,8 @@ class FPLData:
         self._force_dataframes = force_dataframes
 
         self.data = {}
+
+        requests_cache.install_cache("FPLData", backend='sqlite', expire_after=3600)  # 1 hour expire
 
     def fetch(self,
               info=True, fixtures=False, elements: list = None, game_week=False,
