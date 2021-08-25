@@ -150,7 +150,7 @@ class FPLData:
     def fetch_managers(self, manager_ids: list):
         """
         Fetches managers info
-        :param manager_ids: list of ids for managers to get info         
+        :param manager_ids: list of ids for managers to get info
         :return: dict
         """
 
@@ -169,7 +169,7 @@ class FPLData:
     def fetch_managers_history(self, manager_ids: list):
         """
         Fetches managers history
-        :param manager_ids: list of ids for managers to get info         
+        :param manager_ids: list of ids for managers to get info
         :return: dict
         """
 
