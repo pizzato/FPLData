@@ -9,13 +9,14 @@ LEAGUES = []  # List of league IDs
 MYTEAM = None  # Your own manager ID
 EMAIL = None  # FPL Login Email
 PASSWORD = None  # FPL Login Password
+PL_PROFILE_COOKIE = None # Profile Cookie "pl_profile"
 
 now = datetime.now().strftime("%Y%m%d-%H%M%S")
 FOLDER = 'data/{now}/'.format(now=now)
 FN_PREFIX = 'fpldata_'
 
 def fetch_and_dump():
-    fd = FPLData(convert_to_dataframes=True)
+    fd = FPLData(convert_to_dataframes=True, pl_profile_cookie=PL_PROFILE_COOKIE)
 
     file_append_str = '_{now}'.format(now=now)
     os.makedirs(FOLDER)
@@ -58,7 +59,7 @@ def fetch_and_dump():
         with open(FOLDER + FN_PREFIX + 'leagues' + file_append_str + '.pkl', 'wb') as f:
             pickle.dump(leagues_pkl, f)
 
-    if (MYTEAM is not None) and (EMAIL is not None and PASSWORD is not None):
+    if (MYTEAM is not None) and ((EMAIL is not None and PASSWORD is not None) or PL_PROFILE_COOKIE is not None):
         print("Getting My TEAM")
         my_team_pkl = fd.fetch_my_team(my_team = MYTEAM, email=EMAIL, password=PASSWORD)
         with open(FOLDER + FN_PREFIX + 'my_team' + file_append_str + '.pkl', 'wb') as f:
