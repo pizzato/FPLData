@@ -1,6 +1,9 @@
+import json
+
 import requests
 import requests_cache
 import pandas as pd
+import numpy as np
 
 # Base URLs
 
@@ -13,9 +16,26 @@ _EP_MANAGER = _EP_BASE + "entry/{manager_id}/"
 _EP_MANAGER_HISTORY = _EP_BASE + "entry/{manager_id}/history"
 _EP_LEAGUE_STANDING = _EP_BASE + "leagues-classic/{league_id}/standings?page_standings={page}"
 _EP_MYTEAM = _EP_BASE + "my-team/{manager_id}/"
+_EP_TRANSFERS = _EP_BASE + "transfers/"
 _EP_LOGIN = "https://users.premierleague.com/accounts/login/"
-_EP_LOGIN_REDIRECT = "https://fantasy.premierleague.com/a/login"
+_EP_LOGIN_REDIRECT = "https://fantasy.premierleague.com/"
 _MAX_GAME_WEEKS = 38
+
+
+def get_headers(referer): #from fpl
+    """Returns the headers needed for the transfer request."""
+    return {
+        "Accept": "*/*",
+        "Content-Type": "application/json;",
+        "X-Requested-With": "XMLHttpRequest",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/116.0",
+        "Referer": referer
+    }
+
+def serialize_int64(obj):
+    if isinstance(obj, np.int64):
+        return int(obj)
+    raise TypeError ("Type %s is not serializable" % type(obj))
 
 class FPLData:
     """
@@ -23,7 +43,7 @@ class FPLData:
 
         Data is return on each function and also stored in self.data
     """
-    def __init__(self, convert_to_dataframes:bool = True, force_dataframes:bool = False):
+    def __init__(self, convert_to_dataframes:bool=True, force_dataframes:bool=False, pl_profile_cookie=None):
         """
 
         :param convert_to_dataframes: boolean indicating that the data when possible will be converted to dataframes (default: True)
@@ -34,7 +54,15 @@ class FPLData:
 
         self.data = {}
 
-        requests_cache.install_cache("FPLData", backend='sqlite', expire_after=3600)  # 1 hour expire
+        requests_cache.install_cache("FPLData", backend='sqlite', expire_after=60)  # 1 hour expire
+
+        self.session = requests.Session()
+        self.set_pl_profile_cookie(pl_profile_cookie=pl_profile_cookie)
+
+    def set_pl_profile_cookie(self, pl_profile_cookie):
+        self.pl_profile_cookie = pl_profile_cookie
+        self.session.cookies.set(name='pl_profile',
+                                 value=pl_profile_cookie)
 
     def fetch(self,
               info=True, fixtures=False, elements: list = None, game_week=False,
@@ -81,7 +109,7 @@ class FPLData:
         :return: dict
         """
 
-        data_ = requests.get(_EP_INFO).json()
+        data_ = self.session.get(_EP_INFO).json()
 
         if self._convert_to_dataframes:
             for k in data_.keys():
@@ -104,7 +132,7 @@ class FPLData:
         :return: dict
         """
 
-        data_ = requests.get(_EP_FIXTURES).json()
+        data_ = self.session.get(_EP_FIXTURES).json()
         if self._convert_to_dataframes:
             data_ = pd.DataFrame(data_)
 
@@ -120,7 +148,7 @@ class FPLData:
 
         data_ = {}
         for element_id in element_ids:
-            dt_json = requests.get(_EP_ELEMENT.format(element_id=element_id)).json()
+            dt_json = self.session.get(_EP_ELEMENT.format(element_id=element_id)).json()
 
             data_[element_id] = dt_json \
                 if not self._convert_to_dataframes \
@@ -138,7 +166,7 @@ class FPLData:
         data_ = {}
 
         for gw in range(1, _MAX_GAME_WEEKS+1):
-            dt_json = requests.get(_EP_GAMEWEEK.format(game_week=gw)).json()
+            dt_json = self.session.get(_EP_GAMEWEEK.format(game_week=gw)).json()
 
             data_[gw] = dt_json['elements'] \
                 if not self._convert_to_dataframes \
@@ -157,7 +185,7 @@ class FPLData:
         data_ = {}
 
         for manager_id in manager_ids:
-            dt_json = requests.get(_EP_MANAGER.format(manager_id=manager_id)).json()
+            dt_json = self.session.get(_EP_MANAGER.format(manager_id=manager_id)).json()
 
             data_[manager_id] = dt_json \
                 if not self._convert_to_dataframes \
@@ -176,7 +204,7 @@ class FPLData:
         data_ = {}
 
         for manager_id in manager_ids:
-            dt_json = requests.get(_EP_MANAGER_HISTORY.format(manager_id=manager_id)).json()
+            dt_json = self.session.get(_EP_MANAGER_HISTORY.format(manager_id=manager_id)).json()
 
             data_[manager_id] = dt_json \
                 if not self._convert_to_dataframes \
@@ -196,7 +224,7 @@ class FPLData:
         data_ = {}
 
         for league_id in league_ids:
-            dt_json = requests.get(_EP_LEAGUE_STANDING.format(league_id=league_id, page=1)).json()
+            dt_json = self.session.get(_EP_LEAGUE_STANDING.format(league_id=league_id, page=1)).json()
 
             data_[league_id] = dt_json
             data_[league_id]['new_entries'] = dt_json['new_entries']['results']
@@ -204,7 +232,7 @@ class FPLData:
 
             if get_all_standings:
                 while dt_json['standings']['has_next']:
-                    dt_json = requests.get(_EP_LEAGUE_STANDING.format(league_id=league_id, page=int(
+                    dt_json = self.session.get(_EP_LEAGUE_STANDING.format(league_id=league_id, page=int(
                         dt_json['standings']['has_next']) + 1)).json()
 
                     data_[league_id]['standings'] += dt_json['standings']['results']
@@ -219,49 +247,88 @@ class FPLData:
         self.data['league_id'] = data_
         return data_
 
-    def fetch_my_team(self, my_team, email, password):
+    def fetch_my_team(self, my_team, email=None, password=None):
         """
-        Featch information about your team using email and password
+        Featch information about your team using email and password (not working with email and password, use cookie)
 
         :param my_team: team_id
         :param email: email
         :param password: password
+        :param pl_cookies: pl_cookies from a logged in session
         :return: dict
         """
-        with requests.Session() as session:
 
+        if email is not None and password is not None:
             headers = {
                 'authority': 'users.premierleague.com',
-                'cache-control': 'max-age=0',
-                'upgrade-insecure-requests': '1',
                 'origin': 'https://fantasy.premierleague.com',
                 'content-type': 'application/x-www-form-urlencoded',
-                'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.116 Safari/537.36',
-                'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
-                'sec-fetch-site': 'same-site',
-                'sec-fetch-mode': 'navigate',
-                'sec-fetch-user': '?1',
-                'sec-fetch-dest': 'document',
-                'referer': 'https://fantasy.premierleague.com/my-team',
-                'accept-language': 'en-US,en;q=0.9,he;q=0.8',
+                'user-agent': 'Dalvik/2.1.0 (Linux; U; Android 5.1; PRO 5 Build/LMY47D)',
+                #'accept': 'text/html,application/json,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7;',
+                'referer': 'https://fantasy.premierleague.com/',
+                'accept-language': 'en-AU,en-GB;q=0.9,en;q=0.8,en-US;q=0.7',
+                'accept-encoding': 'gzip, deflate, br'
             }
 
             payload = {
-                'password': password,
                 'login': email,
-                'redirect_uri': _EP_LOGIN_REDIRECT,
-                'app': 'plfpl-web'
+                'password': password,
+                'app': 'plfpl-web',
+                'redirect_uri': _EP_LOGIN_REDIRECT
             }
-            session.post(_EP_LOGIN, data=payload, headers=headers)
 
-            data_ = session.get(_EP_MYTEAM.format(manager_id=my_team)).json()
+            _ = self.session.post(_EP_LOGIN, data=payload, headers=headers)
 
-            if self._convert_to_dataframes:
-                for k in ['picks', 'chips']:
-                    data_[k] = pd.DataFrame(data_[k])
+        data_ = self.session.get(_EP_MYTEAM.format(manager_id=my_team)).json()
 
-                if self._force_dataframes:
-                    data_['transfers'] = pd.DataFrame([data_['transfers']]).T
+        if self._convert_to_dataframes:
+            for k in ['picks', 'chips']:
+                data_[k] = pd.DataFrame(data_[k])
 
-            self.data['my_team'] = data_
-            return data_
+            if self._force_dataframes:
+                data_['transfers'] = pd.DataFrame([data_['transfers']]).T
+
+        self.data['my_team'] = data_
+        return data_
+
+    def transfer(self, my_team, event, elements_in, elements_out):
+        elements_in = sorted(elements_in)
+        elements_out = sorted(elements_out)
+
+        df_team_picks = self.fetch_my_team(my_team=my_team)['picks']
+        selling_price = df_team_picks[df_team_picks['element'].isin(elements_out)].sort_values('element')['selling_price'].tolist()
+
+        df_elements = self.fetch_info()['elements']
+        #purchase_price = df_elements[df_elements['code'].isin(elements_in)]['now_cost'].tolist()
+        purchase_price = df_elements[df_elements['id'].isin(elements_in)].sort_values('id')['now_cost'].tolist()
+
+        payload = dict(chip=None, entry=my_team, event=event)
+
+        #element in and out must be of same type, this code should be improved
+        element_in_type = df_elements[df_elements['id'].isin(elements_in)].sort_values('id')['element_type'].tolist()
+        element_out_type = df_elements[df_elements['id'].isin(elements_out)].sort_values('id')['element_type'].tolist()
+
+        d_elem_in = [dict(eid=eid, pp=pp, et=et) for eid, pp, et in zip(elements_in, purchase_price, element_in_type)]
+        d_elem_out = [dict(eid=eid, sp=sp, et=et) for eid, sp, et in zip(elements_out, selling_price, element_out_type)]
+
+        d_elem_in_out = []
+        for elem_in in d_elem_in:
+            while len(d_elem_out) > 0:
+                elem_out = d_elem_out.pop(0)
+                if elem_out['et'] != elem_in['et']:
+                    d_elem_out.append(elem_out)
+                else:
+                    break
+            d_elem_in_out.append((elem_in, elem_out))
+
+        payload['transfers'] = [dict(element_in=elem_in['eid'], element_out=elem_out['eid'], purchase_price=elem_in['pp'], selling_price=elem_out['sp'])
+                                for elem_in, elem_out in d_elem_in_out]
+
+        # {"chip": null, "entry": 4950591, "event": 1,
+        #  "transfers": [{"element_in": 275, "element_out": 482, "purchase_price": 45, "selling_price": 45}]}
+        print(payload)
+        print(json.dumps(payload, default=serialize_int64))
+
+        r = self.session.post(_EP_TRANSFERS, data=json.dumps(payload, default=serialize_int64), headers=get_headers('https://fantasy.premierleague.com/transfers'))
+
+        return r
