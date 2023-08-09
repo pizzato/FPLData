@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "fpldata"
-version = "1.0"
+version = "1.1"
 description = "Python class to read and hold data from Fantasy Premier League API"
 authors = ["Luiz Pizzato"]
 license = "MIT License"
