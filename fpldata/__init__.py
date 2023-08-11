@@ -1,7 +1,6 @@
 import json
 
 import requests
-import requests_cache
 import pandas as pd
 import numpy as np
 
@@ -15,7 +14,7 @@ _EP_GAMEWEEK = _EP_BASE + "event/{game_week}/live/"
 _EP_MANAGER = _EP_BASE + "entry/{manager_id}/"
 _EP_MANAGER_HISTORY = _EP_BASE + "entry/{manager_id}/history"
 _EP_LEAGUE_STANDING = _EP_BASE + "leagues-classic/{league_id}/standings?page_standings={page}"
-_EP_MYTEAM = _EP_BASE + "my-team/{manager_id}/"
+_EP_MYTEAM = _EP_BASE + "my-team/{team_id}/"
 _EP_TRANSFERS = _EP_BASE + "transfers/"
 _EP_LOGIN = "https://users.premierleague.com/accounts/login/"
 _EP_LOGIN_REDIRECT = "https://fantasy.premierleague.com/"
@@ -53,8 +52,6 @@ class FPLData:
         self._force_dataframes = force_dataframes
 
         self.data = {}
-
-        requests_cache.install_cache("FPLData", backend='sqlite', expire_after=60)  # 1 hour expire
 
         self.session = requests.Session()
         self.set_pl_profile_cookie(pl_profile_cookie=pl_profile_cookie)
@@ -254,7 +251,6 @@ class FPLData:
         :param my_team: team_id
         :param email: email
         :param password: password
-        :param pl_cookies: pl_cookies from a logged in session
         :return: dict
         """
 
@@ -279,7 +275,7 @@ class FPLData:
 
             _ = self.session.post(_EP_LOGIN, data=payload, headers=headers)
 
-        data_ = self.session.get(_EP_MYTEAM.format(manager_id=my_team)).json()
+        data_ = self.session.get(_EP_MYTEAM.format(team_id=my_team)).json()
 
         if self._convert_to_dataframes:
             for k in ['picks', 'chips']:
@@ -330,5 +326,61 @@ class FPLData:
         print(json.dumps(payload, default=serialize_int64))
 
         r = self.session.post(_EP_TRANSFERS, data=json.dumps(payload, default=serialize_int64), headers=get_headers('https://fantasy.premierleague.com/transfers'))
+
+        return r
+
+    def pick_team(self, my_team):
+        """
+        Featch information about your team using email and password (not working with email and password, use cookie)
+
+        :param my_team: team_id
+        :return: dict
+        """
+
+        df_team_picks = self.fetch_my_team(my_team=my_team)['picks']
+
+        df_elements = self.fetch_info()['elements']
+        df_team_info = df_elements[df_elements.id.isin(df_team_picks.element)]
+
+        pick_pos_pos = [[1], # 1, GK
+                        [2], [2], [2], # 2, 3, 4: DEF
+                        [2, 3], #5 : DF, MID
+                        [3], [3], [3], # 6, 7, 8: MID
+                        [3, 4], [3, 4],# 9, 10: MID, FRW
+                        [4], # 11: FRW
+                        [1], # 12: GK (Sub)
+                        [2, 3], # 13: DF, MID (Sub)
+                        [2, 3, 4], # 14: DF, MID, FRW (Sub)
+                        [3, 4] # 15: MID, FRW (Sub)
+                        ]
+        sort_columns = ['ep_next', 'total_points', 'now_cost']
+
+
+        picks_list = []
+        for accept_pos in pick_pos_pos:
+            element_pick = df_team_info[df_team_info.element_type.isin(accept_pos) &
+                                        ~df_team_info['id'].isin(picks_list)].sort_values(sort_columns,
+                                                                                     ascending=False)['id'].iloc[0]
+            picks_list.append(element_pick)
+
+        captain = df_team_info.sort_values(sort_columns, ascending=False).iloc[0]
+        vicecaptain = df_team_info[(df_team_info['id'] != captain['id']) &
+                                   (df_team_info['team'] != captain['team'])].sort_values(sort_columns,
+                                                                                          ascending=False).iloc[0]
+
+        picks = [
+            dict(element=pe,
+                 is_captain=bool(pe == captain['id']),
+                 is_vice_captain=bool(pe == vicecaptain['id']),
+                 position=p+1)
+            for p, pe in enumerate(picks_list)
+        ]
+
+        payload = {'chip': None,'picks': picks}
+        print(payload)
+
+        print(json.dumps(payload, default=serialize_int64))
+
+        r = self.session.post(_EP_MYTEAM.format(team_id=my_team), data=json.dumps(payload, default=serialize_int64), headers=get_headers('https://fantasy.premierleague.com/my-team'))
 
         return r
